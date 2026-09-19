@@ -35,7 +35,14 @@ DATABASE_URL=postgres://whiteboard:whiteboard@localhost:5432/whiteboard npm run 
 npm test
 ```
 
-锁定的关键行为（共 24 个用例）：
+真实 PostgreSQL 回归（并发加入同一画布：进程不退出、双方都拿到快照、真正落库）需要数据库：
+
+```bash
+docker compose up -d db
+TEST_DATABASE_URL=postgres://whiteboard:whiteboard@localhost:5432/whiteboard npm test
+```
+
+锁定的关键行为（共 26 个用例；设置 `TEST_DATABASE_URL` 时追加 1 条真实库回归，合计 27）：
 
 1. 降级时进行中的拖动**立即回滚**且**不广播脏位置**
 2. 只读写操作被拒（含可读原因）、非房主不能改角色
@@ -47,6 +54,7 @@ npm test
 8. 图元移动后连线端点贴合最近锚点、路径确定可复现不抖动
 9. 删除图元时挂接连线级联删除，不留悬空端点
 10. 锚到不存在图元 / 自连 / 坐标越界 / 非法尺寸被拒并说明原因
+11. 多路几乎同时加入同一画布：房间只建一次、进程不退出、每路都拿到快照且互见（含真实 PostgreSQL 落库回归）
 
 ## 架构与模块划分
 
@@ -82,6 +90,7 @@ packages/web
 被降级者在收到 `member.role → viewer` 提交的**同一帧**由 reducer 终止拖动并把图元还原到拖动开始时记录的权威几何；由于半截位置从未上送，服务端与其他人都不会看到脏位置。此后任何写操作在 `permissions` 层被拒，画面以服务端权威状态为准。
 
 ### 并发收敛
+- 房间首次加载**单飞**：同一画布的并发 join 共享同一次 `loadOrCreate`，房间只建一次；建库行用 `INSERT … ON CONFLICT DO NOTHING` 兜底，存储故障只给发起方回错误，绝不让进程退出。
 - 每个图元更新是**属性级 patch**（如 `{x,y}` 与 `{fill}` 互不覆盖），不同属性的并发改动天然都保留。
 - 同一属性的并发写按服务端**接收顺序串行定序**，后到者直接基于新基线赋值，所有客户端重放同一条提交日志，最终一致。
 

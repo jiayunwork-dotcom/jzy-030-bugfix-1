@@ -43,6 +43,8 @@ const CANVAS_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export class Hub {
   private rooms = new Map<string, Room>();
+  /** 进行中的首次加载：同一画布的并发 join 共享同一个 Promise，避免重复建行与房间分裂 */
+  private pendingRooms = new Map<string, Promise<Room>>();
   private evictTimers = new Map<string, NodeJS.Timeout>();
   private static readonly EMPTY_TTL_MS = 10 * 60 * 1000;
 
@@ -87,8 +89,11 @@ export class Hub {
     try {
       switch (msg.kind) {
         case 'join':
-          this.enqueue(msg.canvasId, (room) =>
-            this.handleJoin(room, conn, msg).catch((err) => this.sendRejection(conn, err)),
+          this.enqueue(
+            msg.canvasId,
+            (room) => this.handleJoin(room, conn, msg).catch((err) => this.sendRejection(conn, err)),
+            // 房间加载（建库行/回放日志）失败时也要给这一路明确答复
+            (err) => this.sendRejection(conn, err),
           );
           break;
         case 'op':
@@ -369,28 +374,67 @@ export class Hub {
     for (const conn of room.peers.keys()) conn.send(msg);
   }
 
-  private async getRoom(canvasId: string): Promise<Room> {
-    let room = this.rooms.get(canvasId);
-    if (!room) {
-      const data = await this.store.loadOrCreate(canvasId);
-      room = { data, peers: new Map(), tail: Promise.resolve(), presenceDirty: false, presenceTimer: null };
-      this.rooms.set(canvasId, room);
+  private getRoom(canvasId: string): Promise<Room> {
+    const existing = this.rooms.get(canvasId);
+    if (existing) {
+      this.cancelEviction(canvasId);
+      return Promise.resolve(existing);
+    }
+    // 单飞：并发首次加载同一画布时共享同一次 loadOrCreate。
+    // 否则两路 join 会各自 INSERT 画布行（唯一键冲突把进程打挂），
+    // 或各自建成 Room 导致同画布的人被分进两个房间互不可见。
+    let pending = this.pendingRooms.get(canvasId);
+    if (!pending) {
+      pending = this.store
+        .loadOrCreate(canvasId)
+        .then((data) => {
+          const room: Room = {
+            data,
+            peers: new Map(),
+            tail: Promise.resolve(),
+            presenceDirty: false,
+            presenceTimer: null,
+          };
+          this.rooms.set(canvasId, room);
+          this.pendingRooms.delete(canvasId);
+          return room;
+        })
+        .catch((err: unknown) => {
+          // 加载失败不留残渣，下一次 join 可以重试
+          this.pendingRooms.delete(canvasId);
+          throw err;
+        });
+      this.pendingRooms.set(canvasId, pending);
     }
     this.cancelEviction(canvasId);
-    return room;
+    return pending;
   }
 
-  private enqueue(canvasId: string, task: (room: Room) => Promise<void>): void {
+  private enqueue(
+    canvasId: string,
+    task: (room: Room) => Promise<void>,
+    onError?: (err: unknown) => void,
+  ): void {
     if (!canvasId || !CANVAS_RE.test(canvasId)) return;
-    void this.getRoom(canvasId).then((room) => {
-      room.tail = room.tail.then(() =>
-        task(room).catch((err) => {
-          // join 阶段的错误无法关联连接（理论上调用方已持有 conn，由各自处理）
+    void this.getRoom(canvasId)
+      .then((room) => {
+        room.tail = room.tail.then(() =>
+          task(room).catch((err) => {
+            // join 阶段的错误无法关联连接（理论上调用方已持有 conn，由各自处理）
+            // eslint-disable-next-line no-console
+            console.error('room task failed:', err);
+          }),
+        );
+      })
+      .catch((err: unknown) => {
+        // 房间加载失败必须有人接住：告知发起方，绝不能让进程被未处理拒绝打挂
+        if (onError) {
+          onError(err);
+        } else {
           // eslint-disable-next-line no-console
-          console.error('room task failed:', err);
-        }),
-      );
-    });
+          console.error('room load failed:', err);
+        }
+      });
   }
 
   private withRoom(

@@ -52,10 +52,12 @@ export class PgStore implements RoomStore {
       await client.query('BEGIN');
       const res = await client.query('SELECT id FROM canvases WHERE id = $1', [canvasId]);
       if (res.rowCount === 0) {
-        await client.query('INSERT INTO canvases (id, created_at) VALUES ($1, $2)', [
-          canvasId,
-          Date.now(),
-        ]);
+        // 幂等建行：并发首次加载（或重试、多实例）撞在同一画布上时，
+        // 绝不允许唯一键冲突把事务乃至整个进程打挂
+        await client.query(
+          'INSERT INTO canvases (id, created_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
+          [canvasId, Date.now()],
+        );
       }
       const state = newCanvasState(canvasId);
       const members = new Map<string, MemberRow>();
