@@ -1,0 +1,23 @@
+{
+  "name": "@wb/server",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/store/schema.sql','dist/store/schema.sql')\"",
+    "start": "node dist/index.js",
+    "dev": "node --watch --import tsx src/index.ts"
+  },
+  "dependencies": {
+    "@wb/shared": "*",
+    "ws": "^8.21.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "@types/ws": "^8.5.12",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.0",
+    "tsx": "^4.19.0"
+  }
+}

@@ -1,0 +1,175 @@
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', Segoe UI, sans-serif;
+  overflow: hidden;
+}
+.join-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 13px;
+}
+.join-bar input {
+  padding: 3px 6px;
+  border-radius: 4px;
+  border: 1px solid #475569;
+}
+.canvas-link {
+  margin-left: 12px;
+  opacity: 0.8;
+}
+.board-shell {
+  position: relative;
+  height: calc(100% - 36px);
+}
+.canvas {
+  width: 100%;
+  height: 100%;
+  background-color: #f8fafc;
+  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+  background-size: 24px 24px;
+  display: block;
+  touch-action: none;
+}
+.toolbar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12);
+  z-index: 10;
+}
+.toolbar button,
+.mini {
+  padding: 4px 10px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.toolbar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.toolbar .sep {
+  width: 1px;
+  height: 20px;
+  background: #cbd5e1;
+}
+.shape-group {
+  cursor: grab;
+}
+.shape-group.dragging {
+  cursor: grabbing;
+}
+.shape-group.connect-target rect,
+.shape-group.connect-target ellipse {
+  stroke: #2563eb;
+  stroke-width: 3;
+}
+.sticky-text {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+}
+.connection-line {
+  fill: none;
+  stroke: #475569;
+  stroke-width: 2;
+  pointer-events: none;
+}
+.connection-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+.conn-label,
+.shape-label {
+  font-size: 12px;
+  fill: #334155;
+  pointer-events: none;
+}
+.members {
+  position: absolute;
+  top: 60px;
+  right: 12px;
+  width: 230px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 8px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.1);
+  z-index: 10;
+  font-size: 13px;
+}
+.members-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.member-name {
+  flex: 1;
+}
+.member-role {
+  color: #64748b;
+  font-size: 12px;
+}
+.notice {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #b91c1c;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 20;
+  max-width: 70%;
+}
+.status {
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  font-size: 12px;
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.hint {
+  color: #2563eb;
+}

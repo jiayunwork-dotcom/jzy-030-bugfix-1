@@ -1,0 +1,18 @@
+{
+  "name": "collab-whiteboard",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/web"
+  ],
+  "scripts": {
+    "build": "npm run build -w @wb/shared && npm run build -w @wb/web && npm run build -w @wb/server",
+    "test": "npm run build -w @wb/shared && node --import tsx --test packages/shared/test/*.test.ts packages/server/test/*.test.ts packages/web/src/**/*.test.ts",
+    "dev:server": "npm run build -w @wb/shared && npm run dev -w @wb/server",
+    "dev:web": "npm run dev -w @wb/web"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
