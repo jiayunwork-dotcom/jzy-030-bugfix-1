@@ -23,6 +23,12 @@ interface CacheEntry {
 
 export class PgStore implements RoomStore {
   private cache = new Map<string, CacheEntry>();
+  /**
+   * 同一画布并发 loadOrCreate 时共享同一个在飞 Promise。
+   * 否则两路首连会各自 BEGIN→SELECT(空)→INSERT，后提交者撞
+   * canvases_pkey；更糟的是两边各建一份内存权威态，成员与定序分裂。
+   */
+  private loading = new Map<string, Promise<RoomData>>();
 
   constructor(private pool: pg.Pool) {}
 
@@ -44,18 +50,34 @@ export class PgStore implements RoomStore {
   }
 
   async loadOrCreate(canvasId: string): Promise<RoomData> {
-    const existing = this.cache.get(canvasId);
-    if (existing) return existing.data;
+    const cached = this.cache.get(canvasId);
+    if (cached) return cached.data;
+    const inFlight = this.loading.get(canvasId);
+    if (inFlight) return inFlight;
+
+    const task = this.loadOrCreateUncached(canvasId).finally(() => {
+      this.loading.delete(canvasId);
+    });
+    this.loading.set(canvasId, task);
+    return task;
+  }
+
+  private async loadOrCreateUncached(canvasId: string): Promise<RoomData> {
+    // await 期间可能已有另一个调用把它建好并填入缓存（single-flight 之外的二次确认）
+    const recheck = this.cache.get(canvasId);
+    if (recheck) return recheck.data;
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       const res = await client.query('SELECT id FROM canvases WHERE id = $1', [canvasId]);
       if (res.rowCount === 0) {
-        await client.query('INSERT INTO canvases (id, created_at) VALUES ($1, $2)', [
-          canvasId,
-          Date.now(),
-        ]);
+        // ON CONFLICT DO NOTHING：READ COMMITTED 下若并发的另一事务先提交插入，
+        // 这里变成“零行受影响”而不是抛 canvases_pkey；随后照常 SELECT 到对方那行。
+        await client.query(
+          'INSERT INTO canvases (id, created_at) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING',
+          [canvasId, Date.now()],
+        );
       }
       const state = newCanvasState(canvasId);
       const members = new Map<string, MemberRow>();

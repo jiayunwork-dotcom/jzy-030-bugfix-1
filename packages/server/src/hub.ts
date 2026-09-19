@@ -44,6 +44,13 @@ const CANVAS_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 export class Hub {
   private rooms = new Map<string, Room>();
   private evictTimers = new Map<string, NodeJS.Timeout>();
+  /**
+   * 同一画布并发首连时共享同一个加载 Promise（single-flight）。
+   * 不加这层，两路 join 会各自 await loadOrCreate：PG 下第二路的
+   * INSERT 撞 canvases_pkey 导致进程退出；即便不撞，也会产生两个
+   * 互不可见的 Room/RoomData（成员、定序、快照全部分裂）。
+   */
+  private loadingRooms = new Map<string, Promise<Room>>();
   private static readonly EMPTY_TTL_MS = 10 * 60 * 1000;
 
   constructor(private store: RoomStore) {}
@@ -87,8 +94,10 @@ export class Hub {
     try {
       switch (msg.kind) {
         case 'join':
-          this.enqueue(msg.canvasId, (room) =>
-            this.handleJoin(room, conn, msg).catch((err) => this.sendRejection(conn, err)),
+          this.enqueue(
+            msg.canvasId,
+            (room) => this.handleJoin(room, conn, msg).catch((err) => this.sendRejection(conn, err)),
+            conn,
           );
           break;
         case 'op':
@@ -370,27 +379,74 @@ export class Hub {
   }
 
   private async getRoom(canvasId: string): Promise<Room> {
-    let room = this.rooms.get(canvasId);
-    if (!room) {
-      const data = await this.store.loadOrCreate(canvasId);
-      room = { data, peers: new Map(), tail: Promise.resolve(), presenceDirty: false, presenceTimer: null };
-      this.rooms.set(canvasId, room);
+    const existing = this.rooms.get(canvasId);
+    if (existing) {
+      this.cancelEviction(canvasId);
+      return existing;
     }
-    this.cancelEviction(canvasId);
-    return room;
+    // 并发首连复用同一个加载任务：只允许一个 loadOrCreate 在飞，
+    // 其余 join 等同一结果，杜绝重复建画布与房间分裂。
+    const loading = this.loadingRooms.get(canvasId);
+    if (loading) return loading;
+
+    const task = (async () => {
+      try {
+        // await 期间其他 join 会在上面的 loadingRooms 分支排队
+        const data = await this.store.loadOrCreate(canvasId);
+        let room = this.rooms.get(canvasId);
+        if (!room) {
+          room = {
+            data,
+            peers: new Map(),
+            tail: Promise.resolve(),
+            presenceDirty: false,
+            presenceTimer: null,
+          };
+          this.rooms.set(canvasId, room);
+        }
+        this.cancelEviction(canvasId);
+        return room;
+      } finally {
+        // 成功后保留的是 this.rooms 里的 Room；失败则清除在飞标记，
+        // 让后续 join 可以重试，而不是永远拿到一个 rejected Promise。
+        this.loadingRooms.delete(canvasId);
+      }
+    })();
+    this.loadingRooms.set(canvasId, task);
+    return task;
   }
 
-  private enqueue(canvasId: string, task: (room: Room) => Promise<void>): void {
-    if (!canvasId || !CANVAS_RE.test(canvasId)) return;
-    void this.getRoom(canvasId).then((room) => {
-      room.tail = room.tail.then(() =>
-        task(room).catch((err) => {
-          // join 阶段的错误无法关联连接（理论上调用方已持有 conn，由各自处理）
-          // eslint-disable-next-line no-console
-          console.error('room task failed:', err);
-        }),
-      );
-    });
+  private enqueue(
+    canvasId: string,
+    task: (room: Room) => Promise<void>,
+    conn?: Connection,
+  ): void {
+    if (!canvasId || !CANVAS_RE.test(canvasId)) {
+      conn?.send({
+        kind: 'error',
+        code: 'bad_request',
+        reason: `画布 id 非法（1-${LIMITS.canvasIdLen} 位字母数字、-、_）。`,
+      });
+      return;
+    }
+    // getRoom 失败（如数据库不可用）必须回给发起方错误帧并结束链尾，
+    // 绝不能裸抛成 unhandledRejection——那会直接拖垮整个进程。
+    void this.getRoom(canvasId).then(
+      (room) => {
+        room.tail = room.tail.then(() =>
+          task(room).catch((err) => {
+            if (conn) this.sendRejection(conn, err);
+            // eslint-disable-next-line no-console
+            else console.error('room task failed:', err);
+          }),
+        );
+      },
+      (err) => {
+        if (conn) this.sendRejection(conn, err);
+        // eslint-disable-next-line no-console
+        else console.error('room load failed:', err);
+      },
+    );
   }
 
   private withRoom(

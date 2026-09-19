@@ -18,6 +18,19 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon',
 };
 
+// 协作服务器必须把“单个请求/房间的异常”与“进程存活”隔离开。
+// 各入口（ws 适配、Hub 定序链、getRoom 失败分支）都已就地兜底；
+// 这里再加最后一道网：任何漏网的 Promise 拒绝只记录，绝不让进程退出，
+// 否则一条并发加入就能让 /health 和所有画布一起断线。
+process.on('unhandledRejection', (err) => {
+  // eslint-disable-next-line no-console
+  console.error('unhandled rejection (kept alive):', err);
+});
+process.on('uncaughtException', (err) => {
+  // eslint-disable-next-line no-console
+  console.error('uncaught exception (kept alive):', err);
+});
+
 async function main(): Promise<void> {
   const store = config.databaseUrl
     ? await PgStore.create(config.databaseUrl)
